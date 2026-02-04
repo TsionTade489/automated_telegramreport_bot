@@ -39,8 +39,6 @@ bot.start(async (ctx) => {
       commands = [
         '✅ /checkin - Mark your attendance',
         '📝 /daily - Start daily report',
-        '✏️ /editsummary - Edit today\'s summary',
-        '🔒 /finalize - Lock and submit final summary',
         '❓ /help - See all available commands'
       ];
     }
@@ -569,8 +567,6 @@ bot.command('help', async (ctx) => {
       commands = [
         '✅ /checkin - Mark your attendance',
         '📝 /daily - Start daily report',
-        '✏️ /editsummary - Edit today\'s summary',
-        '🔒 /finalize - Lock and submit final summary',
         '🆘 /help - Show this help message',
         '🔄 /start - Restart and see welcome message'
       ];
