@@ -65,44 +65,46 @@ bot.start(async (ctx) => {
 // The "Check In" command
 bot.command('checkin', async (ctx) => {
   try {
-    const telegramId = ctx.from.id;
-    const firstName = ctx.from.first_name || 'there';
-    
-    await getOrCreateUser(telegramId);
-    const result = await checkIn(telegramId);
-    console.log('CHECKIN RESULT:', result);
+    const telegramId = ctx.from.id
+    const firstName = ctx.from.first_name || 'there'
 
-    const currentTime = new Date().toLocaleTimeString('en-US', { 
-      hour: '2-digit', 
-      minute: '2-digit'
-    });
-    
+    await getOrCreateUser(telegramId)
+    await checkIn(telegramId)
+
+    const now = new Date()
+    const etTime = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Africa/Addis_Ababa',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    }).format(now)
+
     await ctx.reply(
       `✅ <b>Check-in successful!</b>\n\n` +
-      `🕐 <b>Time:</b> ${currentTime}\n` +
+      `🕐 <b>Time:</b> ${etTime}\n` +
       `👤 <b>Welcome,</b> ${firstName}\n\n` +
-      `📝 <b>Next Step:</b> Use /daily to list your goals for today.`, 
+      `📝 <b>Next Step:</b> Use /daily to list your goals for today.`,
       { parse_mode: 'HTML' }
-    );
-    
+    )
+
   } catch (err) {
-    console.error('❌ CHECKIN ERROR:', err);
+    console.error('❌ CHECKIN ERROR:', err)
 
     if (err.message === 'ALREADY_CHECKED_IN') {
       return ctx.reply(
         `⚠️ <b>Already checked in today!</b>\n\n` +
-        `You can proceed with /daily to plan your goals or /start_day if you've already listed them.`, 
+        `You can proceed with /daily to plan your goals or /start_day if you've already listed them.`,
         { parse_mode: 'HTML' }
-      );
+      )
     }
 
     await ctx.reply(
-      `❌ <b>Check-in failed</b>\n\n` +
-      `${err.message}\n\nPlease try again or contact support.`, 
+      `❌ <b>Check-in failed</b>\n\n${err.message}`,
       { parse_mode: 'HTML' }
-    );
+    )
   }
-});
+})
+
 
 // 1. Updated /daily Command
 bot.command('daily', async (ctx) => {
