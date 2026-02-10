@@ -15,6 +15,17 @@ dotenv.config();
 const token = process.env.TELEGRAM_BOT_TOKEN || '8513662828:AAHXmaJk9x1lxuY1Ou4rIrSNirSWWERthVA';
 const bot = new Telegraf(token);
 bot.use(session());
+
+const isAfterReportingCutoff = () => {
+  const now = new Date();
+  // Ethiopia is UTC+3. Get current Ethiopia hour.
+  const ethiopiaHour = (now.getUTCHours() + 3) % 24;
+  const ethiopiaMinutes = now.getUTCMinutes();
+  
+  // Cutoff at 19:30 (7:30 PM)
+  return (ethiopiaHour > 19 || (ethiopiaHour === 19 && ethiopiaMinutes >= 30));
+};
+
 // The "Start" command
 bot.start(async (ctx) => {
   try {
@@ -28,12 +39,18 @@ bot.start(async (ctx) => {
     if (user.role === 'ceo') {
       message = `👑 <b>Welcome CEO ${firstName}!</b>\nFull access granted.`;
       commands = [
-        '📊 /report - View daily team report'
+        '📊 /today_report - View daily team report',
+        '📊 /weekly_report - Saturday weekly recap',
+        '📊 /monthly_report - Last month monthly recap', 
+        '📊 /specific YYYY-MM-DD - Report for a date'
       ];
     } else if (user.role === 'admin') {
       message = `🛠️ <b>Welcome Admin ${firstName}!</b>\nYou can manage team reports.`;
       commands = [
-        '📊 /report - View daily team report'
+        '📊 /today_report - View daily team report',
+        '📊 /weekly_report - Saturday weekly recap',
+        '📊 /monthly_report - Last month monthly recap', 
+        '📊 /specific YYYY-MM-DD - Report for a date'
       ];
     } else {
       message = `👋 <b>Welcome ${firstName}!</b>\nLet's get your day organized.`;
@@ -110,9 +127,34 @@ bot.command('checkin', async (ctx) => {
 bot.command('daily', async (ctx) => {
   try {
     const telegramId = ctx.from.id;
-    const user = await getOrCreateUser(telegramId);
-    
-    // 1. Fetch Today's Attendance ID
+    // We fetch the user first to get the correct UUID for the database query
+    const user = await getOrCreateUser(telegramId); 
+
+    // 1. Look for unfinished reports from previous days
+    const { data: unfinished, error: unError } = await supabase
+      .from('daily_summaries')
+      .select('id, created_at')
+      .eq('user_id', user.id) // Use user.id (UUID), not telegramId
+      .eq('is_final', false)
+      .lt('created_at', new Date().toISOString().split('T')[0])
+      .order('created_at', { ascending: false })
+      .maybeSingle(); // Use maybeSingle() so it doesn't throw error if empty
+
+    if (unError) console.error("Unfinished check error:", unError);
+
+    if (unfinished) {
+      return ctx.reply("⚠️ <b>You forgot to update and checkout the last time!</b>\nWould you like to continue with your previous tasks or start a fresh report for today?", {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🔄 Continue Previous Tasks", callback_data: `resume_${unfinished.id}` }],
+            [{ text: "🆕 Start New Task (Fresh)", callback_data: "start_fresh" }]
+          ]
+        }
+      });
+    }
+      
+    // 2. Fetch Today's Attendance ID
     const todayStr = new Date().toISOString().split('T')[0];
     const { data: attendance, error: attError } = await supabase
       .from('attendance')
@@ -126,7 +168,7 @@ bot.command('daily', async (ctx) => {
       return ctx.reply("❌ <b>Check-in first!</b>\nUse /checkin before starting your report.", { parse_mode: 'HTML' });
     }
 
-    // 2. Date Range Check
+    // 3. Check if they already started a report today
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todayEnd = new Date();
@@ -149,7 +191,6 @@ bot.command('daily', async (ctx) => {
     } else {
       const summary = await createDailySummary(user.id, attendance.id);
       summaryId = summary.id;
-      // THE NEW ASK:
       await ctx.reply("🎯 <b>Daily Planning Started</b>\n\nPlease send your <b>first goal</b> for today:", { parse_mode: 'HTML' });
     }
 
@@ -175,7 +216,7 @@ bot.command('start_day', async (ctx) => {
     // Move state to IDLE so they can work. They can still use /add if they forgot something.
     await updateUserState(ctx.from.id, 'IDLE', userState.active_summary_id);
     
-    await ctx.reply("🚀 <b>Goals locked in!</b>\nYour plan has been saved. Go crush it! \n\n💡 Use /done later today to update your progress and checkout.", { parse_mode: 'HTML' });
+    await ctx.reply("🚀 <b>Goals locked in!</b>\nYour plan has been saved. Go crush it! \n\n💡If you want to add more tasks use /add and ONLY use /done LATER today to update your progress and checkout.", { parse_mode: 'HTML' });
   } catch (err) {
     console.error("Start Day Error:", err);
     ctx.reply("❌ Error starting your work day.");
@@ -188,25 +229,31 @@ bot.command('add', async (ctx) => {
     const telegramId = ctx.from.id;
     const user = await getUserState(telegramId);
 
-    // Check if the user is actually in the correct flow
-    if (!user.active_summary_id) {
-      return ctx.reply("⛔ **No active report found.**\n\nPlease type /daily first to start today's session.");
+    if (!user || !user.active_summary_id) {
+      return ctx.reply("⛔ <b>No active report found.</b>\n\nPlease type /daily first to start today's session.", { parse_mode: 'HTML' });
     }
 
-    // Force the state to AWAITING_TITLE even if they were stuck
-    await updateUserState(telegramId, 'AWAITING_TITLE', user.active_summary_id);
-    ctx.reply("1️⃣ **Task Title?**\n(What are you working on right now?)");
+    // UPDATED: Now points to PLANNING for quick entry
+    await updateUserState(telegramId, 'PLANNING', user.active_summary_id);
+    
+    ctx.reply("📝 <b>Quick Add Mode</b>\nSend your task title below. You can send multiple tasks one by one.\n\nType /start_day when you are finished.", { parse_mode: 'HTML' });
 
   } catch (err) {
     console.error("Add Command Error:", err);
-    ctx.reply("❌ Error preparing task entry. Try /daily again.");
+    ctx.reply("❌ Error preparing task entry.");
   }
 });
 
 bot.command('done', async (ctx) => {
+
   console.log("🏁 /done interactive checklist triggered by:", ctx.from.id);
   
   try {
+
+      if (isAfterReportingCutoff()) {
+      return ctx.reply("🌙 <b>Reporting Window Closed.</b>\nIt is past 7:30 PM. You forgot to update your tasks today. Please wait until tomorrow morning to check in again.", { parse_mode: 'HTML' });
+    }
+
     const userState = await getUserState(ctx.from.id);
     
     // 1. Validation: Ensure there is an active session
@@ -269,6 +316,11 @@ bot.action(/toggle_(.+)/, async (ctx) => {
 bot.action('confirm_finalize', async (ctx) => {
   console.log("📥 Finalizing and sending to n8n...");
   try {
+      if (isAfterReportingCutoff()) {
+    await ctx.answerCbQuery("🌙 Reporting window closed.");
+    return ctx.editMessageText("🌙 <b>Window Closed.</b>\nSubmission is no longer allowed tonight. Please speak with your Admin in the morning.", { parse_mode: 'HTML' });
+  }
+
     const telegramId = ctx.from.id;
     const user = await getUserState(telegramId);
 
@@ -326,66 +378,125 @@ bot.action('confirm_finalize', async (ctx) => {
     await ctx.answerCbQuery("❌ Submission failed.");
   }
 });
-bot.command('report', async (ctx) => {
+
+bot.action(/resume_(.+)/, async (ctx) => {
+  const oldSummaryId = ctx.match[1];
+  
+  // 1. Update the old summary to "today" so it appears in today's reports
+  await supabase.from('daily_summaries')
+    .update({ created_at: new Date().toISOString() })
+    .eq('id', oldSummaryId);
+
+  // 2. Update user state to point to this summary
+  await updateUserState(ctx.from.id, 'ACTIVE', oldSummaryId);
+  
+  await ctx.answerCbQuery("Yesterday's tasks restored!");
+  await ctx.editMessageText("✅ <b>Yesterday's tasks have been moved to today.</b>\nYou can now add more tasks or use /done to manage them.", { parse_mode: 'HTML' });
+});
+
+bot.action('start_fresh', async (ctx) => {
+  const telegramId = ctx.from.id;
+  
+  // 1. Mark previous unfinished reports as 'Abandoned' or simply finalized to clear them
+  await supabase.from('daily_summaries')
+    .update({ is_final: true, notes: 'Abandoned via fresh start' })
+    .eq('user_id', telegramId)
+    .eq('is_final', false);
+
+  await ctx.answerCbQuery("Starting fresh...");
+  await ctx.editMessageText("🆕 <b>New Day Started!</b>\nPlease list your tasks for today.");
+  // Trigger your normal /daily task input flow here
+});
+
+// Helper to request report from n8n
+const triggerN8nReport = async (ctx, reportType, targetDate = null) => {
   try {
     const telegramId = ctx.from.id;
     const user = await getOrCreateUser(telegramId);
 
-    if (!['admin', 'ceo'].includes(user.role)) {
+    // 1️⃣ Security Check
+    if (!['admin', 'ceo'].includes(user.role?.toLowerCase())) {
       return ctx.reply('⛔ <b>Access Denied</b>', { parse_mode: 'HTML' });
     }
 
-    const report = await getTodayReport();
-    if (!report || report.length === 0) return ctx.reply('📭 <b>No Activity Today</b>', { parse_mode: 'HTML' });
-
-    let message = `📊 <b>Daily Team Report</b>\n📅 ${new Date().toLocaleDateString()}\n👥 <b>Team Status Overview</b>\n\n`;
-    message += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-    for (const row of report) {
-
-      console.log("DEBUG RAW ROW:", JSON.stringify(row, null, 2));
-
-      const name = row.users?.name || 'Unknown';
-      const dept = row.users?.department || 'N/A';
-      const checkIn = row.check_in_time ? new Date(row.check_in_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
-      
-      // Accessing the most recent summary if it exists
-      const summaryData = row.daily_summaries?.[0];
-
-      // Logic: If there is an AI summary, it's finished (✅). If just raw tasks, it's drafting (⏳).
-      let icon = '❌'; 
-      if (row.check_in_time) {
-        icon = summaryData?.ai_summary ? '✅' : '⏳';
+    // 2️⃣ Immediate Local Status (fast, non-AI)
+    const localData = await getTodayReport();
+    if (localData?.length) {
+      let statusMsg = `📊 <b>Immediate Status Overview</b>\n`;
+      for (const row of localData) {
+        const name = row.users?.name || 'Unknown';
+        const icon = row.daily_summaries?.[0]?.ai_summary ? '✅' : '⏳';
+        statusMsg += `${icon} <b>${name}</b>: ${
+          row.daily_summaries?.[0]?.ai_summary ? 'Summary Ready' : 'In Progress...'
+        }\n`;
       }
-
-      message += `${icon} <b>${name}</b> (${dept})\n`;
-      message += `🕐 Check-in: ${checkIn}\n`;
-
-      if (summaryData) {
-        if (summaryData.ai_summary) {
-          // AI Summary is already pre-formatted by the AI Agent
-          message += `🤖 <b>Summary:</b>\n${summaryData.ai_summary}\n\n`;
-        } 
-        else if (summaryData.tasks && summaryData.tasks.length > 0) {
-          const taskList = summaryData.tasks.map(t => `• ${t.title}`).join('\n');
-          message += `📝 <b>Raw Tasks (Drafting):</b>\n${taskList}\n\n`;
-        } 
-        else {
-          message += `⚠️ <i>Checked in, but no tasks entered.</i>\n\n`;
-        }
-      } else {
-        message += `⚠️ <i>No report started yet.</i>\n\n`;
-      }
+      await ctx.reply(statusMsg, { parse_mode: 'HTML' });
     }
 
-    message += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n💡 <b>Generated at:</b> ${new Date().toLocaleTimeString()}`;
-    
-    await ctx.reply(message, { parse_mode: 'HTML' });
+    // 3️⃣ Notify Admin
+    await ctx.reply(
+      `⌛ <b>Generating ${reportType.toUpperCase()} team report…</b>`,
+      { parse_mode: 'HTML' }
+    );
+
+    // 4️⃣ Trigger TEAM report workflow in n8n
+    await axios.post(
+      'https://n8n.blihmarketing.com/webhook/daily-summary-trigger',
+      {
+        command: reportType,              // WHERE to send the final report
+        date: targetDate ?? new Date().toISOString().split('T')[0]
+      }
+    );
+
   } catch (err) {
-    console.error('REPORT ERROR:', err);
-    await ctx.reply('❌ <b>Report Generation Failed</b>', { parse_mode: 'HTML' });
+    console.error('REPORT TRIGGER ERROR:', err);
+    await ctx.reply('❌ <b>Failed to generate report</b>', { parse_mode: 'HTML' });
   }
+};
+bot.command('today_report', (ctx) =>
+  triggerN8nReport(ctx, 'daily')
+);
+
+bot.command('weekly_report', (ctx) => {
+  if (new Date().getDay() !== 6) {
+    return ctx.reply(
+      '⏳ <b>Weekly reports are only available on Saturdays.</b>',
+      { parse_mode: 'HTML' }
+    );
+  }
+  triggerN8nReport(ctx, 'weekly');
 });
+
+bot.command('specific', async (ctx) => {
+    try {
+        console.log('SPECIFIC command received:', ctx.message.text);
+
+        const parts = ctx.message.text.trim().split(/\s+/);
+        const dateArg = parts[1];
+
+        console.log('Parsed date:', dateArg);
+
+        if (!dateArg) {
+            return ctx.reply(
+                "❌ Please provide a date.\nUsage:\n/specific 2026-02-09"
+            );
+        }
+
+        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        if (!dateRegex.test(dateArg)) {
+            return ctx.reply("❌ Invalid format. Use YYYY-MM-DD");
+        }
+
+        await ctx.reply(`🕒 Generating report for ${dateArg}...`);
+        await triggerN8nReport(ctx, 'specific', dateArg);
+
+    } catch (err) {
+        console.error('SPECIFIC command error:', err);
+        ctx.reply("⚠️ Failed to trigger report.");
+    }
+});
+
+
 
 // Help command
 bot.command('help', async (ctx) => {
