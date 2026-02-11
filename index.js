@@ -65,7 +65,7 @@ bot.start(async (ctx) => {
 
     let callToAction = '';
     if (['ceo', 'admin'].includes(user.role)) {
-      callToAction = '💡 <b>Tip:</b> Use /report to see who is active right now.';
+      callToAction = '💡 <b>Tip:</b> Use the above commands to see the report.';
     } else {
       callToAction = '💡 <b>Getting Started:</b>\n1. Use /checkin first.\n2. Use /daily to list your goals.\n3. Type /start_day when your list is ready!';
     }
@@ -380,18 +380,27 @@ bot.action('confirm_finalize', async (ctx) => {
 });
 
 bot.action(/resume_(.+)/, async (ctx) => {
-  const oldSummaryId = ctx.match[1];
-  
-  // 1. Update the old summary to "today" so it appears in today's reports
-  await supabase.from('daily_summaries')
-    .update({ created_at: new Date().toISOString() })
-    .eq('id', oldSummaryId);
+  try {
+    const oldSummaryId = ctx.match[1];
 
-  // 2. Update user state to point to this summary
-  await updateUserState(ctx.from.id, 'ACTIVE', oldSummaryId);
-  
-  await ctx.answerCbQuery("Yesterday's tasks restored!");
-  await ctx.editMessageText("✅ <b>Yesterday's tasks have been moved to today.</b>\nYou can now add more tasks or use /done to manage them.", { parse_mode: 'HTML' });
+    await supabase
+      .from('daily_summaries')
+      .update({ created_at: new Date().toISOString() })
+      .eq('id', oldSummaryId);
+
+    await updateUserState(ctx.from.id, 'PLANNING', oldSummaryId);
+
+    await ctx.answerCbQuery("Yesterday's tasks restored!");
+
+    await ctx.editMessageText(
+      "✅ <b>Yesterday's tasks have been moved to today.</b>\nYou can now add more tasks or use /done to manage them.",
+      { parse_mode: 'HTML' }
+    );
+
+  } catch (err) {
+    console.error("Resume error:", err);
+    await ctx.reply("❌ Failed to resume tasks.");
+  }
 });
 
 bot.action('start_fresh', async (ctx) => {
@@ -444,7 +453,8 @@ const triggerN8nReport = async (ctx, reportType, targetDate = null) => {
       'https://n8n.blihmarketing.com/webhook/daily-summary-trigger',
       {
         command: reportType,              // WHERE to send the final report
-        date: targetDate ?? new Date().toISOString().split('T')[0]
+        date: targetDate ?? new Date().toISOString().split('T')[0],
+        chat_id: ctx.chat.id
       }
     );
 
@@ -465,6 +475,12 @@ bot.command('weekly_report', (ctx) => {
     );
   }
   triggerN8nReport(ctx, 'weekly');
+});
+
+bot.command('monthly_report', (ctx) => {
+  const now = new Date();
+  // Logic: Usually run on the 1st, but let's allow it whenever
+  triggerN8nReport(ctx, 'monthly');
 });
 
 bot.command('specific', async (ctx) => {
@@ -495,8 +511,6 @@ bot.command('specific', async (ctx) => {
         ctx.reply("⚠️ Failed to trigger report.");
     }
 });
-
-
 
 // Help command
 bot.command('help', async (ctx) => {
