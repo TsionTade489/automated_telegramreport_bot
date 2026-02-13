@@ -33,49 +33,58 @@ bot.start(async (ctx) => {
     const user = await getOrCreateUser(telegramId);
     const firstName = ctx.from.first_name || 'there';
 
-    let message = '';
-    let commands = [];
-    
-    if (user.role === 'ceo') {
-      message = `👑 <b>Welcome CEO ${firstName}!</b>\nFull access granted.`;
-      commands = [
-        '📊 /today_report - View daily team report',
-        '📊 /weekly_report - Saturday weekly recap',
-        '📊 /monthly_report - Last month monthly recap', 
-        '📊 /specific YYYY-MM-DD - Report for a date'
-      ];
-    } else if (user.role === 'admin') {
-      message = `🛠️ <b>Welcome Admin ${firstName}!</b>\nYou can manage team reports.`;
-      commands = [
-        '📊 /today_report - View daily team report',
-        '📊 /weekly_report - Saturday weekly recap',
-        '📊 /monthly_report - Last month monthly recap', 
-        '📊 /specific YYYY-MM-DD - Report for a date'
-      ];
-    } else {
-      message = `👋 <b>Welcome ${firstName}!</b>\nLet's get your day organized.`;
-      commands = [
-        '✅ /checkin - Mark your attendance',
-        '📝 /daily - Plan your goals for today',
-        '🚀 /start_day - Lock in goals and start working',
-        '🏁 /done - Review goals and checkout',
-        '❓ /help - See all available commands'
-      ];
+
+    if (['admin'].includes(user.role)) {
+      const excluded = ['ceo', 'CEO', 'ceo ', 'CEO ', 'innovation', 'innovation ', 'Innovation', 'General', 'General '];
+     
+      const { data, error } = await supabase
+        .from('users')
+        .select('department')
+        .eq('active', true)
+        .not('department', 'in', `(${excluded.join(',')})`);
+
+      if (error) {
+          console.error("Error fetching departments:", error);
+          return ctx.reply("❌ Error loading departments.");
+         }
+
+      const departments = [...new Set(
+        data
+          .map(u => u.department)
+          .filter(Boolean)
+      )];
+
+      const buttons = departments.map(dep => [{
+        text: dep,
+        callback_data: `select_dep_${dep}`
+      }]);
+
+      return ctx.reply(
+        ` <b>Welcome ${user.role.toUpperCase()} ${firstName}</b>\n\nPlease select a team: Tech, Creative, Digital, admin`,
+        {
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: buttons }
+        }
+      );
     }
 
-    let callToAction = '';
-    if (['ceo', 'admin'].includes(user.role)) {
-      callToAction = '💡 <b>Tip:</b> Use the above commands to see the report.';
-    } else {
-      callToAction = '💡 <b>Getting Started:</b>\n1. Use /checkin first.\n2. Use /daily to list your goals.\n3. Type /start_day when your list is ready!';
-    }
+    const message = ` <b>Welcome ${firstName}!</b>\nLet's get your day organized.`;
+    const commands = [
+      '/checkin - Mark your attendance',
+      '/daily - Plan your goals for today',
+      '/start_day - Lock in goals and start working',
+      '/done - Review goals and checkout',
+      '/help - See all available commands'
+    ];
 
-    const fullMessage = `${message}\n\n📋 <b>Available Commands:</b>\n${commands.join('\n')}\n\n${callToAction}`;
-    
-    await ctx.reply(fullMessage, { parse_mode: 'HTML' });
+    await ctx.reply(
+      `${message}\n\n<b>Available Commands:</b>\n${commands.join('\n')}`,
+      { parse_mode: 'HTML' }
+    );
+
   } catch (err) {
     console.error('Bot Error:', err);
-    await ctx.reply('❌ Something went wrong. Please try again later.');
+    await ctx.reply('❌ Something went wrong.');
   }
 });
 
@@ -97,10 +106,10 @@ bot.command('checkin', async (ctx) => {
     }).format(now)
 
     await ctx.reply(
-      `✅ <b>Check-in successful!</b>\n\n` +
-      `🕐 <b>Time:</b> ${etTime}\n` +
-      `👤 <b>Welcome,</b> ${firstName}\n\n` +
-      `📝 <b>Next Step:</b> Use /daily to list your goals for today.`,
+      `<b>Check-in successful!</b>\n\n` +
+      `<b>Time:</b> ${etTime}\n` +
+      `<b>Welcome,</b> ${firstName}\n\n` +
+      `<b>Next Step:</b> Use /daily to list your goals for today.`,
       { parse_mode: 'HTML' }
     )
 
@@ -191,7 +200,7 @@ bot.command('daily', async (ctx) => {
     } else {
       const summary = await createDailySummary(user.id, attendance.id);
       summaryId = summary.id;
-      await ctx.reply("🎯 <b>Daily Planning Started</b>\n\nPlease send your <b>first goal</b> for today:", { parse_mode: 'HTML' });
+      await ctx.reply(" <b>Daily Planning Started</b>\n\nPlease send your <b>first goal</b> for today:", { parse_mode: 'HTML' });
     }
 
     // Set state to PLANNING
@@ -216,7 +225,7 @@ bot.command('start_day', async (ctx) => {
     // Move state to IDLE so they can work. They can still use /add if they forgot something.
     await updateUserState(ctx.from.id, 'IDLE', userState.active_summary_id);
     
-    await ctx.reply("🚀 <b>Goals locked in!</b>\nYour plan has been saved. Go crush it! \n\n💡If you want to add more tasks use /add and ONLY use /done LATER today to update your progress and checkout.", { parse_mode: 'HTML' });
+    await ctx.reply(" <b>Goals locked in!</b>\nYour plan has been saved. Go crush it! \n\n💡If you want to add more tasks use /add and ONLY use /done LATER today to update your progress and checkout.", { parse_mode: 'HTML' });
   } catch (err) {
     console.error("Start Day Error:", err);
     ctx.reply("❌ Error starting your work day.");
@@ -230,13 +239,13 @@ bot.command('add', async (ctx) => {
     const user = await getUserState(telegramId);
 
     if (!user || !user.active_summary_id) {
-      return ctx.reply("⛔ <b>No active report found.</b>\n\nPlease type /daily first to start today's session.", { parse_mode: 'HTML' });
+      return ctx.reply(" <b>No active report found.</b>\n\nPlease type /daily first to start today's session.", { parse_mode: 'HTML' });
     }
 
     // UPDATED: Now points to PLANNING for quick entry
     await updateUserState(telegramId, 'PLANNING', user.active_summary_id);
     
-    ctx.reply("📝 <b>Quick Add Mode</b>\nSend your task title below. You can send multiple tasks one by one.\n\nType /start_day when you are finished.", { parse_mode: 'HTML' });
+    ctx.reply(" <b>Quick Add Mode</b>\nSend your task title below. You can send multiple tasks one by one.\n\nType /start_day when you are finished.", { parse_mode: 'HTML' });
 
   } catch (err) {
     console.error("Add Command Error:", err);
@@ -246,7 +255,7 @@ bot.command('add', async (ctx) => {
 
 bot.command('done', async (ctx) => {
 
-  console.log("🏁 /done interactive checklist triggered by:", ctx.from.id);
+  console.log(" /done interactive checklist triggered by:", ctx.from.id);
   
   try {
 
@@ -300,7 +309,7 @@ bot.action(/toggle_(.+)/, async (ctx) => {
 
     // 3. Ask the first question WITHOUT changing the DB yet
     return ctx.reply(
-      `📉 <b>Updating Task:</b> "${task.title}"\n\n` +
+      ` <b>Updating Task:</b> "${task.title}"\n\n` +
       `1️⃣ <b>What is the current status?</b>\n` +
       `1) Not started\n` +
       `2) In progress\n` +
@@ -371,7 +380,7 @@ bot.action('confirm_finalize', async (ctx) => {
     await updateUserState(telegramId, 'IDLE', null);
 
     await ctx.answerCbQuery("✅ Report Submitted!");
-    await ctx.editMessageText("🚀 <b>Report Submitted Successfully!</b>\nAdmin report categories are now synced.", { parse_mode: 'HTML' });
+    await ctx.editMessageText(" <b>Report Submitted Successfully!</b>\nAdmin report categories are now synced.", { parse_mode: 'HTML' });
     
   } catch (err) {
     console.error("Finalize Error:", err);
@@ -393,7 +402,7 @@ bot.action(/resume_(.+)/, async (ctx) => {
     await ctx.answerCbQuery("Yesterday's tasks restored!");
 
     await ctx.editMessageText(
-      "✅ <b>Yesterday's tasks have been moved to today.</b>\nYou can now add more tasks or use /done to manage them.",
+      " <b>Yesterday's tasks have been moved to today.</b>\nYou can now add more tasks or use /done to manage them.",
       { parse_mode: 'HTML' }
     );
 
@@ -413,47 +422,37 @@ bot.action('start_fresh', async (ctx) => {
     .eq('is_final', false);
 
   await ctx.answerCbQuery("Starting fresh...");
-  await ctx.editMessageText("🆕 <b>New Day Started!</b>\nPlease list your tasks for today.");
+  await ctx.editMessageText(" <b>New Day Started!</b>\nPlease list your tasks for today.");
   // Trigger your normal /daily task input flow here
 });
 
 // Helper to request report from n8n
-const triggerN8nReport = async (ctx, reportType, targetDate = null) => {
+const triggerN8nReport = async (ctx, reportType) => {
   try {
     const telegramId = ctx.from.id;
     const user = await getOrCreateUser(telegramId);
 
-    // 1️⃣ Security Check
-    if (!['admin', 'ceo'].includes(user.role?.toLowerCase())) {
-      return ctx.reply('⛔ <b>Access Denied</b>', { parse_mode: 'HTML' });
+    if (!['admin'].includes(user.role?.toLowerCase())) {
+      return ctx.reply(' <b>Access Denied</b>', { parse_mode: 'HTML' });
     }
 
-    // 2️⃣ Immediate Local Status (fast, non-AI)
-    const localData = await getTodayReport();
-    if (localData?.length) {
-      let statusMsg = `📊 <b>Immediate Status Overview</b>\n`;
-      for (const row of localData) {
-        const name = row.users?.name || 'Unknown';
-        const icon = row.daily_summaries?.[0]?.ai_summary ? '✅' : '⏳';
-        statusMsg += `${icon} <b>${name}</b>: ${
-          row.daily_summaries?.[0]?.ai_summary ? 'Summary Ready' : 'In Progress...'
-        }\n`;
-      }
-      await ctx.reply(statusMsg, { parse_mode: 'HTML' });
+    if (!user.selected_department) {
+      return ctx.reply(
+        '⚠️ Please select a team first using /start',
+        { parse_mode: 'HTML' }
+      );
     }
 
-    // 3️⃣ Notify Admin
     await ctx.reply(
-      `⌛ <b>Generating ${reportType.toUpperCase()} team report…</b>`,
+      ` <b>Generating ${reportType.toUpperCase()} report for ${user.selected_department}…</b>`,
       { parse_mode: 'HTML' }
     );
 
-    // 4️⃣ Trigger TEAM report workflow in n8n
     await axios.post(
       'https://n8n.blihmarketing.com/webhook/daily-summary-trigger',
       {
-        command: reportType,              // WHERE to send the final report
-        date: targetDate ?? new Date().toISOString().split('T')[0],
+        command: reportType,
+        department: user.selected_department,   
         chat_id: ctx.chat.id
       }
     );
@@ -463,6 +462,30 @@ const triggerN8nReport = async (ctx, reportType, targetDate = null) => {
     await ctx.reply('❌ <b>Failed to generate report</b>', { parse_mode: 'HTML' });
   }
 };
+
+bot.action(/select_dep_(.+)/, async (ctx) => {
+  try {
+    const department = ctx.match[1];
+
+    await supabase
+      .from('users')
+      .update({ selected_department: department })
+      .eq('telegram_id', ctx.from.id);
+
+    await ctx.answerCbQuery();
+    await ctx.editMessageText(
+      `<b>${department}</b> selected.\n\nNow you can use:\n` +
+      `/today_report\n` +
+      `/weekly_report`,
+      { parse_mode: 'HTML' }
+    );
+
+  } catch (err) {
+    console.error("Department select error:", err);
+    ctx.reply("❌ Failed to select department.");
+  }
+});
+
 bot.command('today_report', (ctx) =>
   triggerN8nReport(ctx, 'daily')
 );
@@ -470,46 +493,11 @@ bot.command('today_report', (ctx) =>
 bot.command('weekly_report', (ctx) => {
   if (new Date().getDay() !== 6) {
     return ctx.reply(
-      '⏳ <b>Weekly reports are only available on Saturdays.</b>',
+      ' <b>Weekly reports are only available on Saturdays.</b>',
       { parse_mode: 'HTML' }
     );
   }
   triggerN8nReport(ctx, 'weekly');
-});
-
-bot.command('monthly_report', (ctx) => {
-  const now = new Date();
-  // Logic: Usually run on the 1st, but let's allow it whenever
-  triggerN8nReport(ctx, 'monthly');
-});
-
-bot.command('specific', async (ctx) => {
-    try {
-        console.log('SPECIFIC command received:', ctx.message.text);
-
-        const parts = ctx.message.text.trim().split(/\s+/);
-        const dateArg = parts[1];
-
-        console.log('Parsed date:', dateArg);
-
-        if (!dateArg) {
-            return ctx.reply(
-                "❌ Please provide a date.\nUsage:\n/specific 2026-02-09"
-            );
-        }
-
-        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-        if (!dateRegex.test(dateArg)) {
-            return ctx.reply("❌ Invalid format. Use YYYY-MM-DD");
-        }
-
-        await ctx.reply(`🕒 Generating report for ${dateArg}...`);
-        await triggerN8nReport(ctx, 'specific', dateArg);
-
-    } catch (err) {
-        console.error('SPECIFIC command error:', err);
-        ctx.reply("⚠️ Failed to trigger report.");
-    }
 });
 
 // Help command
@@ -521,22 +509,23 @@ bot.command('help', async (ctx) => {
 
     let commands = [];
     
-    if (['ceo', 'admin'].includes(user.role)) {
+    if (['admin'].includes(user.role)) {
       commands = [
-        '📊 /report - View daily team report',
-        '🆘 /help - Show this help message',
-        '🔄 /start - Restart and see welcome message'
+        '/today_report - View daily team report',
+        '/weekly_report - View weekly team report',
+        '/help - Show this help message',
+        '/start - Restart and see welcome message'
       ];
     } else {
       commands = [
-        '✅ /checkin - Mark your attendance',
-        '📝 /daily - Start daily report',
-        '🆘 /help - Show this help message',
-        '🔄 /start - Restart and see welcome message'
+        '/checkin - Mark your attendance',
+        '/daily - Start daily report',
+        '/help - Show this help message',
+        '/start - Restart and see welcome message'
       ];
     }
 
-    const helpMessage = `🤖 *Bot Help for ${firstName}*\n\n📋 *Available Commands:*\n${commands.join('\n')}\n\n💡 *Management Role:*\n📊 View team reports and monitor attendance\n\n❓ *Need help?* Contact your team admin.`;
+    const helpMessage = ` *Bot Help for ${firstName}*\n\n *Available Commands:*\n${commands.join('\n')}\n\n *Management Role:*\n View team reports and monitor attendance\n\n❓ *Need help?* Contact your team admin.`;
     
     await ctx.reply(helpMessage, { parse_mode: 'Markdown' });
   } catch (err) {
