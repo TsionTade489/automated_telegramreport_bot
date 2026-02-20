@@ -35,7 +35,7 @@ bot.start(async (ctx) => {
 
 
     if (['admin'].includes(user.role)) {
-      const excluded = ['ceo', 'CEO', 'ceo ', 'CEO ', 'innovation', 'innovation ', 'Innovation', 'General', 'General '];
+      const excluded = ['ceo', 'CEO', 'ceo ', 'CEO ', 'innovation', 'innovation ', 'Innovation', 'Innovation ', 'General', 'General '];
      
       const { data, error } = await supabase
         .from('users')
@@ -353,7 +353,6 @@ bot.action('confirm_finalize', async (ctx) => {
     }));
 
     // 3. TRIGGER N8N with Structured Data
-    const N8N_WEBHOOK_URL = 'https://n8n.blihmarketing.com/webhook/daily-summary-trigger';
     const payload = {
       summary_id: user.active_summary_id,
       attendance_id: summaryRecord.attendance_id,
